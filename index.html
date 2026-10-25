@@ -158,7 +158,12 @@
     </div>
   </div>
   <label class="check"><input type="checkbox" id="cleanColors" checked> Clean up colors (best for text, logos and flat art)</label>
-  <label class="check"><input type="checkbox" id="smooth"> Smooth shading (fits a real gradient to each shape; best with 2 to 8 colors)</label>
+  <label for="shading">Shading</label>
+  <select id="shading">
+    <option value="flat">Flat colors (classic vector look)</option>
+    <option value="gradient">Smooth gradients (fits one fade per shape; best with 2 to 8 colors)</option>
+    <option value="exact">Exact (keeps the original shading inside crisp vector edges)</option>
+  </select>
   <label class="check"><input type="checkbox" id="removeBg"> Remove background (the color around the edges)</label>
 
   <button class="main" id="go">Generate</button>
@@ -497,7 +502,7 @@ const CLEAN_SIZE = 2048;
 function traceToSvg(img) {
   const d = detailSettings[$("detail").value];
   // Smooth shading needs clean flat regions to fit gradients into, so it turns on color clean-up.
-  const smooth = $("smooth").checked;
+  const smooth = $("shading").value !== "flat";
   const clean = $("cleanColors").checked || smooth;
   const colors = Number($("colors").value);
   // Shrink large photos. Small pictures stay as they are; the curves come out smooth either way.
@@ -628,7 +633,8 @@ function finishSvg(svg, w, h, bg, shadingSource) {
       p.setAttribute("stroke-linejoin", "round");
     });
   }
-  if (shadingSource) fitGradients(doc, shadingSource);
+  if (shadingSource && $("shading").value === "exact") embedShading(doc, shadingSource, w, h);
+  else if (shadingSource) fitGradients(doc, shadingSource);
   return new XMLSerializer().serializeToString(root);
 }
 
@@ -716,6 +722,51 @@ function fitGradients(doc, canvas) {
   });
 }
 
+// ---------- Exact shading ----------
+// Keeps the traced outlines for crisp edges, and shows the original picture inside them,
+// so soft shading, folds and glows look exactly like the source. The picture is stored
+// inside the SVG as a PNG, clipped to the union of the traced shapes.
+function embedShading(doc, canvas, w, h) {
+  const SVG = "http://www.w3.org/2000/svg";
+  const root = doc.documentElement;
+  const paths = [...doc.querySelectorAll("path")];
+  if (!paths.length) return;
+  const clip = doc.createElementNS(SVG, "clipPath");
+  clip.setAttribute("id", "shapes");
+  paths.forEach((p) => {
+    const c = doc.createElementNS(SVG, "path");
+    c.setAttribute("d", p.getAttribute("d"));
+    clip.appendChild(c);
+  });
+  const defs = doc.createElementNS(SVG, "defs");
+  defs.appendChild(clip);
+  root.insertBefore(defs, root.firstChild);
+  // The original has soft edge pixels that would peek out as a pale fringe. Make the picture
+  // see-through within 2 px of the outlines so the crisp traced shape underneath shows there.
+  const w2 = canvas.width, h2 = canvas.height;
+  const maskCanvas = document.createElement("canvas"); maskCanvas.width = w2; maskCanvas.height = h2;
+  const mctx = maskCanvas.getContext("2d");
+  paths.forEach((p) => mctx.fill(new Path2D(p.getAttribute("d"))));
+  const mask = mctx.getImageData(0, 0, w2, h2).data;
+  const pic = document.createElement("canvas"); pic.width = w2; pic.height = h2;
+  const pctx = pic.getContext("2d");
+  pctx.drawImage(canvas, 0, 0);
+  const out = pctx.getImageData(0, 0, w2, h2);
+  const inside = (x, y) => x >= 0 && y >= 0 && x < w2 && y < h2 && mask[(y * w2 + x) * 4 + 3] > 128;
+  for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
+    let keep = inside(x, y);
+    for (let dy = -2; keep && dy <= 2; dy++) for (let dx = -2; keep && dx <= 2; dx++) if (!inside(x + dx, y + dy)) keep = false;
+    if (!keep) out.data[(y * w2 + x) * 4 + 3] = 0;
+  }
+  pctx.putImageData(out, 0, 0);
+  const image = doc.createElementNS(SVG, "image");
+  image.setAttribute("href", pic.toDataURL("image/png"));
+  image.setAttribute("x", 0); image.setAttribute("y", 0);
+  image.setAttribute("width", w); image.setAttribute("height", h);
+  image.setAttribute("clip-path", "url(#shapes)");
+  root.appendChild(image);
+}
+
 function showResult() {
   $("original").src = sourceImage.src;
   $("svgOut").innerHTML = lastSvg;
@@ -734,8 +785,8 @@ $("zoom").oninput = applyZoom;
 
 // Smooth shading works best when each shape is one piece, so ticking it drops a high
 // color count down to 2. The person can still change it afterwards.
-$("smooth").onchange = () => {
-  if ($("smooth").checked && Number($("colors").value) > 8) $("colors").value = "2";
+$("shading").onchange = () => {
+  if ($("shading").value !== "flat" && Number($("colors").value) > 8) $("colors").value = "2";
 };
 
 // Waits a moment so the "Working..." message appears before tracing starts.
