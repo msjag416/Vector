@@ -117,6 +117,11 @@
     <label>Picture to enlarge and sharpen</label>
     <div class="drop" id="upDrop">Tap to choose an image</div>
     <input type="file" id="upFile" accept="image/jpeg,image/png,image/webp" class="hidden">
+    <label for="upEngine">Upscaler</label>
+    <select id="upEngine">
+      <option value="topaz">Topaz (best for photos, falls back to Recraft if it fails)</option>
+      <option value="recraft">Recraft Crisp (reliable, picks its own size)</option>
+    </select>
     <label for="upScale">How much bigger</label>
     <select id="upScale">
       <option value="2" selected>2x (double the size)</option>
@@ -378,6 +383,9 @@ async function uploadToKie(file) {
   throw new Error("Couldn't upload the picture to KIE.ai: " + lastError);
 }
 
+$("upEngine").value = loadPref("upEngine") || "topaz";
+$("upEngine").onchange = () => savePref("upEngine", $("upEngine").value);
+
 $("upDrop").onclick = () => $("upFile").click();
 $("upFile").onchange = () => {
   const f = $("upFile").files[0];
@@ -406,8 +414,12 @@ async function upscaleWithTopaz(original, factor) {
       model: "topaz/image-upscale",
       input: { image_url: imageUrl, upscale_factor: String(passes[i]) },
     }, "Topaz is sharpening and enlarging your picture..." + label);
+    const recraft = () => runKieJob({
+      model: "recraft/crisp-upscale",
+      input: { image: imageUrl },
+    }, "Recraft Crisp is sharpening and enlarging your picture..." + label);
     try {
-      picture = await topaz();
+      picture = await ($("upEngine").value === "recraft" ? recraft() : topaz());
     } catch (e) {
       // KIE sometimes answers "internal error" for no reason. Try Topaz once more,
       // then fall back to KIE's other upscaler (Recraft Crisp) so the job still finishes.
@@ -417,10 +429,8 @@ async function upscaleWithTopaz(original, factor) {
         picture = await topaz();
       } catch (e2) {
         if (!/internal error/i.test(e2.message)) throw e2;
-        picture = await runKieJob({
-          model: "recraft/crisp-upscale",
-          input: { image: imageUrl },
-        }, "Topaz is down, using Recraft Crisp instead..." + label);
+        setStatus("Topaz is down, using Recraft Crisp instead..." + label);
+        picture = await recraft();
       }
     }
     if (picture.size > 10 * 1024 * 1024 && i < passes.length - 1) {
