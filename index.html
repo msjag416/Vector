@@ -742,7 +742,7 @@ function embedShading(doc, canvas, w, h) {
   const defs = doc.createElementNS(SVG, "defs");
   defs.appendChild(clip);
   root.insertBefore(defs, root.firstChild);
-  // The original has soft edge pixels that would show as a pale rim. Within 2 px of the
+  // The original has soft edge pixels that would show as a pale rim. Within 4 px of the
   // outlines, replace each pixel with the average of the solid pixels just inside it, so the
   // picture's own shading runs right up to the crisp traced edge.
   const w2 = canvas.width, h2 = canvas.height;
@@ -756,16 +756,16 @@ function embedShading(doc, canvas, w, h) {
   const out = pctx.getImageData(0, 0, w2, h2);
   const src = new Uint8ClampedArray(out.data);
   const inside = (x, y) => x >= 0 && y >= 0 && x < w2 && y < h2 && mask[(y * w2 + x) * 4 + 3] > 128;
-  const solid = new Uint8Array(w2 * h2);   // 1 = inside and at least 2 px from any edge
+  const solid = new Uint8Array(w2 * h2);   // 1 = inside and at least 4 px from any edge
   for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
     let ok = inside(x, y);
-    for (let dy = -2; ok && dy <= 2; dy++) for (let dx = -2; ok && dx <= 2; dx++) if (!inside(x + dx, y + dy)) ok = false;
+    for (let dy = -4; ok && dy <= 4; dy++) for (let dx = -4; ok && dx <= 4; dx++) if (!inside(x + dx, y + dy)) ok = false;
     solid[y * w2 + x] = ok ? 1 : 0;
   }
   for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
     if (!inside(x, y) || solid[y * w2 + x]) continue;
     let r = 0, g = 0, b = 0, n = 0;
-    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
       const xx = x + dx, yy = y + dy;
       if (xx < 0 || yy < 0 || xx >= w2 || yy >= h2 || !solid[yy * w2 + xx]) continue;
       const j = (yy * w2 + xx) * 4; r += src[j]; g += src[j + 1]; b += src[j + 2]; n++;
