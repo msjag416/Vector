@@ -130,6 +130,7 @@
       </select>
     </div>
   </div>
+  <label class="check"><input type="checkbox" id="cleanColors" checked> Clean up colors (best for text, logos and flat art)</label>
   <label class="check"><input type="checkbox" id="removeWhite"> Remove white background</label>
 
   <button class="main" id="go">Generate</button>
@@ -306,10 +307,16 @@ const detailSettings = {
 // The downloaded file opens this many points wide (or tall) in a vector app.
 const OUTPUT_SIZE = 2048;
 
+// With "Clean up colors" on, the picture is resized to this many pixels on its longest side.
+// Enlarging a 1024 px AI picture to 2048 gives the tracer smoother letter edges to follow.
+const CLEAN_SIZE = 2048;
+
 function traceToSvg(img) {
   const d = detailSettings[$("detail").value];
+  const clean = $("cleanColors").checked;
   // Shrink large photos. Small pictures stay as they are; the curves come out smooth either way.
-  const scale = Math.min(1, d.maxSize / Math.max(img.naturalWidth, img.naturalHeight));
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  const scale = clean ? CLEAN_SIZE / longest : Math.min(1, d.maxSize / longest);
   const w = Math.round(img.naturalWidth * scale);
   const h = Math.round(img.naturalHeight * scale);
   const canvas = document.createElement("canvas");
@@ -320,16 +327,72 @@ function traceToSvg(img) {
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h).data;
+  const palette = clean ? cleanColors(pixels, Number($("colors").value)) : undefined;
 
   const svg = VTracer.vectorize_rgba(new Uint8Array(pixels.buffer), w, h, {
     // "stacked" piles shapes on top of each other. "cutout" cuts real holes instead, which
     // matters when the white background is removed (so the hole in a letter O stays open).
     mode: "spline", hierarchical: $("removeWhite").checked ? "cutout" : "stacked",
-    maxColors: Number($("colors").value),
+    maxColors: Number($("colors").value), palette,
     filterSpeckle: d.speckle, colorPrecision: d.precision, layerDifference: d.layerGap,
     cornerThreshold: 60, lengthThreshold: 4, spliceThreshold: 45,
   });
   return finishSvg(svg, w, h);
+}
+
+// Finds the picture's real colors and snaps every pixel to the nearest one.
+// AI pictures have soft, blended edges around letters and shapes. Without this step those
+// blends become pale halos in the vector. Returns the colors as "#rrggbb" for VTracer.
+function cleanColors(px, maxColors) {
+  const total = px.length / 4;
+
+  // 1. Count colors in coarse steps of 17, so grain doesn't split one color into dozens.
+  const hist = new Map();
+  for (let i = 0; i < px.length; i += 4) {
+    const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+    hist.set(k, (hist.get(k) || 0) + 1);
+  }
+  const bins = [...hist.entries()].sort((a, b) => b[1] - a[1])
+    .map(([k, n]) => ({ c: [((k >> 8) & 15) * 17, ((k >> 4) & 15) * 17, (k & 15) * 17], n }));
+
+  // 2. Merge near-duplicates and drop colors that cover less than 0.05% of the picture.
+  const merged = [];
+  for (const b of bins) {
+    const m = merged.find((q) => Math.abs(q.c[0] - b.c[0]) + Math.abs(q.c[1] - b.c[1]) + Math.abs(q.c[2] - b.c[2]) < 48);
+    if (m) m.n += b.n; else merged.push(b);
+  }
+  let pal = merged.filter((q) => q.n > total * 0.0005).slice(0, maxColors).map((q) => q.c);
+
+  // 3. A color that sits between two bigger colors (pink between red and white) is an edge
+  //    blend, not a real color. Drop it.
+  const between = (c, a, b) => {
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+    const L = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2;
+    if (!L) return false;
+    const t = (ac[0] * ab[0] + ac[1] * ab[1] + ac[2] * ab[2]) / L;
+    if (t < 0.12 || t > 0.88) return false;
+    return Math.hypot(a[0] + ab[0] * t - c[0], a[1] + ab[1] * t - c[1], a[2] + ab[2] * t - c[2]) < 20;
+  };
+  const dropBlends = () => { pal = pal.filter((c, i) => { for (let a = 0; a < i; a++) for (let b = a + 1; b < i; b++) if (between(c, pal[a], pal[b])) return false; return true; }); };
+  dropBlends();
+
+  // 4. Nudge each color to the average of the pixels close to it (two passes), then snap
+  //    every pixel to its nearest color.
+  const nearest = (i) => { let best = 0, bd = Infinity; for (let j = 0; j < pal.length; j++) { const q = pal[j]; const dd = (q[0] - px[i]) ** 2 + (q[1] - px[i + 1]) ** 2 + (q[2] - px[i + 2]) ** 2; if (dd < bd) { bd = dd; best = j; } } return [best, bd]; };
+  for (let pass = 0; pass < 2; pass++) {
+    const sum = pal.map(() => [0, 0, 0, 0]);
+    for (let i = 0; i < px.length; i += 4) {
+      const [j, dd] = nearest(i);
+      if (dd < 3600) { const s = sum[j]; s[0] += px[i]; s[1] += px[i + 1]; s[2] += px[i + 2]; s[3]++; }
+    }
+    pal = sum.filter((s) => s[3] > total * 0.0005).map((s) => [Math.round(s[0] / s[3]), Math.round(s[1] / s[3]), Math.round(s[2] / s[3])]);
+    dropBlends();
+  }
+  for (let i = 0; i < px.length; i += 4) {
+    const q = pal[nearest(i)[0]];
+    px[i] = q[0]; px[i + 1] = q[1]; px[i + 2] = q[2];
+  }
+  return pal.map((c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join(""));
 }
 
 // Adds the scaling info vector apps need, sets a good starting size,
