@@ -732,6 +732,12 @@ function applyZoom() {
 }
 $("zoom").oninput = applyZoom;
 
+// Smooth shading works best when each shape is one piece, so ticking it drops a high
+// color count down to 2. The person can still change it afterwards.
+$("smooth").onchange = () => {
+  if ($("smooth").checked && Number($("colors").value) > 8) $("colors").value = "2";
+};
+
 // Waits a moment so the "Working..." message appears before tracing starts.
 const pause = () => new Promise((r) => setTimeout(r, 50));
 
