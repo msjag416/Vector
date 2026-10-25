@@ -75,6 +75,7 @@
   <div class="tabs">
     <button class="tab active" data-tab="prompt">From a prompt</button>
     <button class="tab" data-tab="image">From an image</button>
+    <button class="tab" data-tab="upscale">Upscale</button>
   </div>
 
   <!-- Tab 1: prompt -->
@@ -110,7 +111,22 @@
     <input type="file" id="file" accept="image/*" class="hidden">
   </section>
 
-  <!-- Settings shared by both tabs -->
+  <!-- Tab 3: AI upscale (KIE.ai Topaz) -->
+  <section id="tab-upscale" class="hidden">
+    <label>Picture to enlarge and sharpen</label>
+    <div class="drop" id="upDrop">Tap to choose an image</div>
+    <input type="file" id="upFile" accept="image/jpeg,image/png,image/webp" class="hidden">
+    <label for="upScale">How much bigger</label>
+    <select id="upScale">
+      <option value="2" selected>2x (double the size)</option>
+      <option value="4">4x (four times the size)</option>
+    </select>
+    <div class="hint">Uses Topaz through your KIE.ai key. Costs a few cents per picture and takes about 10 to 30 seconds.</div>
+    <button class="main" id="upGo">Upscale with AI</button>
+  </section>
+
+  <!-- Settings shared by the prompt and image tabs -->
+  <div id="vectorSettings">
   <div class="row">
     <div>
       <label for="detail">Detail</label>
@@ -136,7 +152,18 @@
   <label class="check"><input type="checkbox" id="removeBg"> Remove background (the color around the edges)</label>
 
   <button class="main" id="go">Generate</button>
+  </div>
   <div class="status" id="status"></div>
+
+  <div class="result hidden" id="upResult">
+    <div class="compare">
+      <div class="box"><h3>Before</h3><img id="upBefore" alt=""></div>
+      <div class="box"><h3>After (AI upscaled)</h3><img id="upAfter" alt=""></div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="upDownload">Download upscaled picture</button>
+    </div>
+  </div>
 
   <div class="result hidden" id="result">
     <div class="compare">
@@ -203,6 +230,11 @@ document.querySelectorAll(".tab").forEach((btn) => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
     $("tab-prompt").classList.toggle("hidden", currentTab !== "prompt");
     $("tab-image").classList.toggle("hidden", currentTab !== "image");
+    $("tab-upscale").classList.toggle("hidden", currentTab !== "upscale");
+    // The vector settings and results belong to the first two tabs only.
+    $("vectorSettings").classList.toggle("hidden", currentTab === "upscale");
+    $("result").classList.toggle("hidden", currentTab === "upscale" || !lastSvg);
+    $("upResult").classList.toggle("hidden", currentTab !== "upscale" || !upscaledBlob);
     $("go").textContent = currentTab === "prompt" ? "Generate" : "Convert to vector";
     setStatus("");
   };
@@ -255,24 +287,31 @@ async function makeWithPollinations(fullPrompt) {
 }
 
 // KIE.ai: start a job, then check back until it's done.
-async function makeWithKie(fullPrompt) {
+function kieHeaders() {
   const key = $("kieKey").value.trim();
   if (!key) throw new Error("Please paste your KIE.ai key in AI settings at the bottom of the page.");
-  const headers = { "Authorization": "Bearer " + key, "Content-Type": "application/json" };
+  return { "Authorization": "Bearer " + key, "Content-Type": "application/json" };
+}
 
+async function makeWithKie(fullPrompt) {
   setStatus("Sending your prompt to KIE.ai...");
+  return runKieJob({
+    model: "google/nano-banana",
+    input: { prompt: fullPrompt, output_format: "png", image_size: $("shape").value },
+  }, "KIE.ai is drawing your picture...");
+}
+
+// Starts a KIE.ai job, then checks back every 2 seconds until the picture is ready.
+async function runKieJob(body, waitingText) {
+  const headers = kieHeaders();
   const start = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
-    method: "POST", headers,
-    body: JSON.stringify({
-      model: "google/nano-banana",
-      input: { prompt: fullPrompt, output_format: "png", image_size: $("shape").value },
-    }),
+    method: "POST", headers, body: JSON.stringify(body),
   }).then((r) => r.json());
   if (start.code !== 200) throw new Error("KIE.ai said: " + (start.msg || "something went wrong"));
   const taskId = start.data.taskId;
 
   for (let i = 0; i < 90; i++) {
-    setStatus("KIE.ai is drawing your picture... (" + (i * 2) + " seconds)");
+    setStatus(waitingText + " (" + (i * 2) + " seconds)");
     await new Promise((r) => setTimeout(r, 2000));
     const info = await fetch("https://api.kie.ai/api/v1/jobs/recordInfo?taskId=" + taskId, { headers }).then((r) => r.json());
     const job = info.data || {};
@@ -286,6 +325,77 @@ async function makeWithKie(fullPrompt) {
   }
   throw new Error("KIE.ai took too long. Please try again.");
 }
+
+// ---------- AI upscale (KIE.ai Topaz) ----------
+// Topaz needs the picture at a web address, so it's first sent to KIE's upload service.
+let upscaledBlob = null;
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error("That file couldn't be read."));
+    r.readAsDataURL(file);
+  });
+}
+
+async function uploadToKie(file) {
+  const headers = kieHeaders();
+  const body = JSON.stringify({ base64Data: await fileToDataUrl(file), uploadPath: "vector-maker", fileName: file.name });
+  // KIE's documentation lists two upload addresses; try the main one, then the other.
+  const hosts = ["https://kieai.redpandaai.co/api/file-base64-upload", "https://api.kie.ai/api/v1/file-base64-upload"];
+  let lastError = "";
+  for (const url of hosts) {
+    try {
+      const res = await fetch(url, { method: "POST", headers, body }).then((r) => r.json());
+      const d = res.data || {};
+      const fileUrl = d.fileUrl || d.downloadUrl || d.url;
+      if (fileUrl) return fileUrl;
+      lastError = res.msg || JSON.stringify(res).slice(0, 200);
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+  throw new Error("Couldn't upload the picture to KIE.ai: " + lastError);
+}
+
+$("upDrop").onclick = () => $("upFile").click();
+$("upFile").onchange = () => {
+  const f = $("upFile").files[0];
+  if (f) $("upDrop").innerHTML = '<img src="' + URL.createObjectURL(f) + '" alt="">';
+};
+
+$("upGo").onclick = async () => {
+  const file = $("upFile").files[0];
+  $("upGo").disabled = true;
+  try {
+    if (!file) throw new Error("Please choose a picture first.");
+    if (file.size > 10 * 1024 * 1024) throw new Error("That picture is over 10 MB. Please use a smaller one.");
+    setStatus("Uploading your picture to KIE.ai...");
+    const imageUrl = await uploadToKie(file);
+    upscaledBlob = await runKieJob({
+      model: "topaz/image-upscale",
+      input: { image_url: imageUrl, upscale_factor: $("upScale").value },
+    }, "Topaz is sharpening and enlarging your picture...");
+    $("upBefore").src = URL.createObjectURL(file);
+    $("upAfter").src = URL.createObjectURL(upscaledBlob);
+    $("upResult").classList.remove("hidden");
+    const after = await loadImage($("upAfter").src);
+    setStatus("Done! The new picture is " + after.naturalWidth + " x " + after.naturalHeight + " pixels.");
+  } catch (e) {
+    setStatus(e instanceof TypeError ? "Couldn't reach KIE.ai. Check your internet and try again." : e.message, true);
+  }
+  $("upGo").disabled = false;
+};
+
+$("upDownload").onclick = () => {
+  if (!upscaledBlob) return;
+  const ext = (upscaledBlob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(upscaledBlob);
+  a.download = "upscaled-" + Date.now() + "." + ext;
+  a.click();
+};
 
 // ---------- Turning a picture into a vector ----------
 function loadImage(src) {

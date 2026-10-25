@@ -21,7 +21,9 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 
 **From an image.** The person picks a picture from their device. It never leaves the device.
 
-## Converting to vector (both ways end here)
+**Upscale (third tab).** This doesn't make a vector. It sends a picture to KIE.ai's Topaz upscaler (the Topaz Gigapixel engine) and gets back a 2x or 4x larger, sharper picture. Topaz needs the picture at a web address, so the app first sends it to KIE's upload service (`file-base64-upload`), then starts a `topaz/image-upscale` job and checks back every 2 seconds, the same way the prompt tab does. Needs the person's KIE.ai key and costs a few cents per picture. Pictures must be JPEG, PNG or WebP under 10 MB.
+
+## Converting to vector (the prompt and image tabs end here)
 
 1. Large pictures are shrunk (800, 1024 or 1280 pixels on the longest side for Low, Medium or High detail) so it runs fast on an iPad. Small pictures are left as they are.
 2. The picture is drawn onto a hidden canvas with a white background behind any see-through parts.
@@ -36,7 +38,7 @@ Why VTracer: the first version used a tool called ImageTracer, which copied the 
 
 ## What gets saved on the device
 
-Only two things are remembered, in the browser's own storage: which AI service was picked, and the KIE.ai key. Nothing is sent anywhere except the prompt (to the chosen AI service).
+Only two things are remembered, in the browser's own storage: which AI service was picked, and the KIE.ai key. Nothing is sent anywhere except the prompt (to the chosen AI service) and, on the Upscale tab, the picture being upscaled (to KIE.ai).
 
 ## Known limits
 
