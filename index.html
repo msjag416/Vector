@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vector Maker</title>
+<style>
+  :root {
+    --bg: #161718; --panel: #1f2021; --line: #3a3b3d; --text: #ececec;
+    --muted: #9a9b9d; --accent: #ffffff; --accent-text: #111; --error: #ff8a80;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; font-weight: 600; text-align: center; margin: 0 0 20px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+  .tab {
+    flex: 1; padding: 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--muted); font-size: 16px; cursor: pointer;
+  }
+  .tab.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  label { display: block; font-size: 15px; margin: 16px 0 8px; }
+  textarea, select, input[type=password] {
+    width: 100%; background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px; font-size: 16px; font-family: inherit;
+  }
+  textarea { min-height: 140px; resize: vertical; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .row label { margin-top: 12px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 16px; font-size: 15px; }
+  .check input { width: 20px; height: 20px; }
+  .drop {
+    border: 2px dashed var(--line); border-radius: 12px; padding: 32px 16px; text-align: center;
+    color: var(--muted); cursor: pointer; background: var(--panel);
+  }
+  .drop img { max-width: 100%; max-height: 240px; border-radius: 8px; }
+  button.main {
+    width: 100%; margin-top: 20px; padding: 16px; border: 0; border-radius: 12px;
+    background: var(--accent); color: var(--accent-text); font-size: 17px; font-weight: 600; cursor: pointer;
+  }
+  button.main:disabled { opacity: .4; cursor: default; }
+  .hidden { display: none !important; }
+  .status { margin-top: 16px; min-height: 22px; color: var(--muted); text-align: center; }
+  .status.error { color: var(--error); }
+  .result { margin-top: 20px; }
+  .compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .box h3 { margin: 0 0 8px; font-size: 14px; color: var(--muted); font-weight: 500; }
+  .box img, .box svg { width: 100%; height: auto; display: block; border-radius: 6px; }
+  .checker { background: repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px; border-radius: 6px; }
+  .actions { display: flex; gap: 12px; margin-top: 12px; }
+  .actions button {
+    flex: 1; padding: 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font-size: 16px; cursor: pointer;
+  }
+  .actions button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  details { margin-top: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+  summary { cursor: pointer; font-size: 15px; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Vector Maker</h1>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="prompt">From a prompt</button>
+    <button class="tab" data-tab="image">From an image</button>
+  </div>
+
+  <!-- Tab 1: prompt -->
+  <section id="tab-prompt">
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" placeholder="What do you want to see?"></textarea>
+    <div class="row">
+      <div>
+        <label for="style">Style</label>
+        <select id="style">
+          <option value="flat">Flat illustration</option>
+          <option value="logo">Logo or icon</option>
+          <option value="sticker">Sticker</option>
+          <option value="line">Line art</option>
+        </select>
+      </div>
+      <div>
+        <label for="shape">Shape</label>
+        <select id="shape">
+          <option value="1:1">Square</option>
+          <option value="16:9">Wide</option>
+          <option value="9:16">Tall</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tab 2: image -->
+  <section id="tab-image" class="hidden">
+    <label>Your image or photo</label>
+    <div class="drop" id="drop">Tap to choose an image</div>
+    <input type="file" id="file" accept="image/*" class="hidden">
+  </section>
+
+  <!-- Settings shared by both tabs -->
+  <div class="row">
+    <div>
+      <label for="detail">Detail</label>
+      <select id="detail">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+      </select>
+    </div>
+    <div>
+      <label for="colors">Colors</label>
+      <select id="colors">
+        <option value="2">2</option>
+        <option value="4">4</option>
+        <option value="8">8</option>
+        <option value="16" selected>16</option>
+        <option value="32">32</option>
+      </select>
+    </div>
+  </div>
+  <label class="check"><input type="checkbox" id="removeWhite"> Remove white background</label>
+
+  <button class="main" id="go">Generate</button>
+  <div class="status" id="status"></div>
+
+  <div class="result hidden" id="result">
+    <div class="compare">
+      <div class="box"><h3>Original picture</h3><img id="original" alt=""></div>
+      <div class="box"><h3>Vector (SVG)</h3><div class="checker" id="svgOut"></div></div>
+    </div>
+    <div class="actions">
+      <button id="retrace">Re-trace with new settings</button>
+      <button class="primary" id="download">Download SVG</button>
+    </div>
+  </div>
+
+  <details>
+    <summary>AI settings</summary>
+    <label for="service">AI service for prompts</label>
+    <select id="service">
+      <option value="free">Free (Pollinations.ai)</option>
+      <option value="kie">KIE.ai (paid, uses your key)</option>
+    </select>
+    <div id="kieBox" class="hidden">
+      <label for="kieKey">KIE.ai API key</label>
+      <input type="password" id="kieKey" placeholder="Paste your key here" autocomplete="off">
+      <div class="hint">Your key is saved only in this browser on this device.</div>
+    </div>
+  </details>
+</main>
+
+<script src="imagetracer.js"></script>
+<script>
+// ---------- Small helpers ----------
+const $ = (id) => document.getElementById(id);
+let currentTab = "prompt";
+let sourceImage = null;   // the picture we trace (an <img> element)
+let lastSvg = "";         // the most recent SVG text
+
+function setStatus(text, isError) {
+  $("status").textContent = text;
+  $("status").classList.toggle("error", !!isError);
+}
+
+function savePref(key, value) { try { localStorage.setItem(key, value); } catch (e) {} }
+function loadPref(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+// ---------- Tabs ----------
+document.querySelectorAll(".tab").forEach((btn) => {
+  btn.onclick = () => {
+    currentTab = btn.dataset.tab;
+    document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b === btn));
+    $("tab-prompt").classList.toggle("hidden", currentTab !== "prompt");
+    $("tab-image").classList.toggle("hidden", currentTab !== "image");
+    $("go").textContent = currentTab === "prompt" ? "Generate" : "Convert to vector";
+    setStatus("");
+  };
+});
+
+// ---------- AI settings (remembered on this device) ----------
+$("service").value = loadPref("service") || "free";
+$("kieKey").value = loadPref("kieKey") || "";
+function showKieBox() { $("kieBox").classList.toggle("hidden", $("service").value !== "kie"); }
+showKieBox();
+$("service").onchange = () => { savePref("service", $("service").value); showKieBox(); };
+$("kieKey").oninput = () => savePref("kieKey", $("kieKey").value.trim());
+
+// ---------- Choosing an image file ----------
+$("drop").onclick = () => $("file").click();
+$("file").onchange = () => {
+  const f = $("file").files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  $("drop").innerHTML = '<img src="' + url + '" alt="">';
+};
+
+// ---------- Turning a prompt into a picture ----------
+const styleWords = {
+  flat: "flat vector illustration, simple clean shapes, solid flat colors, no gradients, no texture, no shadows, plain white background",
+  logo: "minimal vector logo icon, bold simple shapes, few solid colors, no gradients, centered, plain white background",
+  sticker: "die-cut sticker design, flat vector art, thick outlines, solid colors, no gradients, plain white background",
+  line: "clean black line art, vector outline drawing, no shading, no fill, plain white background",
+};
+
+const sizes = { "1:1": [1024, 1024], "16:9": [1344, 768], "9:16": [768, 1344] };
+
+async function makePictureFromPrompt(prompt) {
+  const fullPrompt = prompt + ", " + styleWords[$("style").value];
+  if ($("service").value === "kie") return makeWithKie(fullPrompt);
+  return makeWithPollinations(fullPrompt);
+}
+
+// Free service: one web address returns the picture.
+async function makeWithPollinations(fullPrompt) {
+  const [w, h] = sizes[$("shape").value];
+  const seed = Math.floor(Math.random() * 1000000);
+  const url = "https://image.pollinations.ai/prompt/" + encodeURIComponent(fullPrompt) +
+    "?width=" + w + "&height=" + h + "&seed=" + seed + "&nologo=true&model=flux";
+  setStatus("Drawing your picture with the free service. This can take up to a minute...");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("The free service is busy right now (code " + res.status + "). Try again in a minute.");
+  return await res.blob();
+}
+
+// KIE.ai: start a job, then check back until it's done.
+async function makeWithKie(fullPrompt) {
+  const key = $("kieKey").value.trim();
+  if (!key) throw new Error("Please paste your KIE.ai key in AI settings at the bottom of the page.");
+  const headers = { "Authorization": "Bearer " + key, "Content-Type": "application/json" };
+
+  setStatus("Sending your prompt to KIE.ai...");
+  const start = await fetch("https://api.kie.ai/api/v1/jobs/createTask", {
+    method: "POST", headers,
+    body: JSON.stringify({
+      model: "google/nano-banana",
+      input: { prompt: fullPrompt, output_format: "png", image_size: $("shape").value },
+    }),
+  }).then((r) => r.json());
+  if (start.code !== 200) throw new Error("KIE.ai said: " + (start.msg || "something went wrong"));
+  const taskId = start.data.taskId;
+
+  for (let i = 0; i < 90; i++) {
+    setStatus("KIE.ai is drawing your picture... (" + (i * 2) + " seconds)");
+    await new Promise((r) => setTimeout(r, 2000));
+    const info = await fetch("https://api.kie.ai/api/v1/jobs/recordInfo?taskId=" + taskId, { headers }).then((r) => r.json());
+    const job = info.data || {};
+    if (job.state === "success") {
+      const urls = JSON.parse(job.resultJson || "{}").resultUrls || [];
+      if (!urls.length) throw new Error("KIE.ai finished but sent no picture.");
+      const res = await fetch(urls[0]);
+      return await res.blob();
+    }
+    if (job.state === "fail") throw new Error("KIE.ai couldn't make it: " + (job.failMsg || "unknown reason"));
+  }
+  throw new Error("KIE.ai took too long. Please try again.");
+}
+
+// ---------- Turning a picture into a vector ----------
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("That picture couldn't be opened."));
+    img.src = src;
+  });
+}
+
+// Detail level -> tracing settings. Bigger size and smaller numbers = more detail.
+const detailSettings = {
+  low:    { maxSize: 500,  ltres: 2,   qtres: 2,   pathomit: 32, blurradius: 3 },
+  medium: { maxSize: 800,  ltres: 1,   qtres: 1,   pathomit: 12, blurradius: 1 },
+  high:   { maxSize: 1200, ltres: 0.5, qtres: 0.5, pathomit: 4,  blurradius: 0 },
+};
+
+function traceToSvg(img) {
+  const d = detailSettings[$("detail").value];
+  // Shrink large photos so tracing stays fast on a phone or iPad.
+  const scale = Math.min(1, d.maxSize / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.round(img.naturalWidth * scale);
+  const h = Math.round(img.naturalHeight * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff";            // see-through areas become white
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(img, 0, 0, w, h);
+  const pixels = ctx.getImageData(0, 0, w, h);
+
+  let svg = ImageTracer.imagedataToSVG(pixels, {
+    numberofcolors: Number($("colors").value),
+    ltres: d.ltres, qtres: d.qtres, pathomit: d.pathomit, blurradius: d.blurradius,
+    colorquantcycles: 3, strokewidth: 1, roundcoords: 1, viewbox: true,
+  });
+  if ($("removeWhite").checked) svg = removeWhiteShapes(svg);
+  return svg;
+}
+
+// Deletes the near-white shapes so the background becomes see-through.
+function removeWhiteShapes(svg) {
+  const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+  doc.querySelectorAll("path").forEach((p) => {
+    const m = (p.getAttribute("fill") || "").match(/rgb\((\d+),(\d+),(\d+)\)/);
+    if (m && +m[1] > 235 && +m[2] > 235 && +m[3] > 235) p.remove();
+  });
+  return new XMLSerializer().serializeToString(doc);
+}
+
+function showResult() {
+  $("original").src = sourceImage.src;
+  $("svgOut").innerHTML = lastSvg;
+  $("result").classList.remove("hidden");
+}
+
+// Waits a moment so the "Working..." message appears before tracing starts.
+const pause = () => new Promise((r) => setTimeout(r, 50));
+
+async function traceAndShow() {
+  setStatus("Converting to vector...");
+  await pause();
+  lastSvg = traceToSvg(sourceImage);
+  showResult();
+  const kb = Math.round(lastSvg.length / 1024);
+  setStatus("Done! Your vector file is " + kb + " KB.");
+}
+
+// ---------- Buttons ----------
+$("go").onclick = async () => {
+  $("go").disabled = true;
+  try {
+    let blob;
+    if (currentTab === "prompt") {
+      const prompt = $("prompt").value.trim();
+      if (!prompt) throw new Error("Please type a prompt first.");
+      try {
+        blob = await makePictureFromPrompt(prompt);
+      } catch (e) {
+        if (e instanceof TypeError) throw new Error("Couldn't reach the AI service. Check your internet and try again.");
+        throw e;
+      }
+    } else {
+      blob = $("file").files[0];
+      if (!blob) throw new Error("Please choose an image first.");
+    }
+    sourceImage = await loadImage(URL.createObjectURL(blob));
+    await traceAndShow();
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+  $("go").disabled = false;
+};
+
+$("retrace").onclick = () => { if (sourceImage) traceAndShow(); };
+
+$("download").onclick = () => {
+  if (!lastSvg) return;
+  const blob = new Blob([lastSvg], { type: "image/svg+xml" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "vector-" + Date.now() + ".svg";
+  a.click();
+};
+</script>
+</body>
+</html>
