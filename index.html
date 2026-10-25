@@ -624,9 +624,10 @@ function finishSvg(svg, w, h, bg, shadingSource) {
       if (dist < 60) p.remove();
     });
   }
-  if (removeBg || shadingSource) {
+  if ((removeBg || shadingSource) && $("shading").value !== "exact") {
     // Cutout mode can leave hairline gaps where shapes meet. A thin outline in the
-    // shape's own color covers them.
+    // shape's own color covers them. (Exact shading covers them with the picture instead,
+    // and an outline there would poke half a pixel outside the shape.)
     doc.querySelectorAll("path").forEach((p) => {
       p.setAttribute("stroke", p.getAttribute("fill"));
       p.setAttribute("stroke-width", "1");
@@ -725,7 +726,7 @@ function fitGradients(doc, canvas) {
 // ---------- Exact shading ----------
 // Keeps the traced outlines for crisp edges, and shows the original picture inside them,
 // so soft shading, folds and glows look exactly like the source. The picture is stored
-// inside the SVG as a PNG, clipped to the union of the traced shapes.
+// inside the SVG as a JPEG, clipped to the union of the traced shapes.
 function embedShading(doc, canvas, w, h) {
   const SVG = "http://www.w3.org/2000/svg";
   const root = doc.documentElement;
@@ -741,8 +742,9 @@ function embedShading(doc, canvas, w, h) {
   const defs = doc.createElementNS(SVG, "defs");
   defs.appendChild(clip);
   root.insertBefore(defs, root.firstChild);
-  // The original has soft edge pixels that would peek out as a pale fringe. Make the picture
-  // see-through within 2 px of the outlines so the crisp traced shape underneath shows there.
+  // The original has soft edge pixels that would show as a pale rim. Within 2 px of the
+  // outlines, replace each pixel with the average of the solid pixels just inside it, so the
+  // picture's own shading runs right up to the crisp traced edge.
   const w2 = canvas.width, h2 = canvas.height;
   const maskCanvas = document.createElement("canvas"); maskCanvas.width = w2; maskCanvas.height = h2;
   const mctx = maskCanvas.getContext("2d");
@@ -752,15 +754,27 @@ function embedShading(doc, canvas, w, h) {
   const pctx = pic.getContext("2d");
   pctx.drawImage(canvas, 0, 0);
   const out = pctx.getImageData(0, 0, w2, h2);
+  const src = new Uint8ClampedArray(out.data);
   const inside = (x, y) => x >= 0 && y >= 0 && x < w2 && y < h2 && mask[(y * w2 + x) * 4 + 3] > 128;
+  const solid = new Uint8Array(w2 * h2);   // 1 = inside and at least 2 px from any edge
   for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
-    let keep = inside(x, y);
-    for (let dy = -2; keep && dy <= 2; dy++) for (let dx = -2; keep && dx <= 2; dx++) if (!inside(x + dx, y + dy)) keep = false;
-    if (!keep) out.data[(y * w2 + x) * 4 + 3] = 0;
+    let ok = inside(x, y);
+    for (let dy = -2; ok && dy <= 2; dy++) for (let dx = -2; ok && dx <= 2; dx++) if (!inside(x + dx, y + dy)) ok = false;
+    solid[y * w2 + x] = ok ? 1 : 0;
+  }
+  for (let y = 0; y < h2; y++) for (let x = 0; x < w2; x++) {
+    if (!inside(x, y) || solid[y * w2 + x]) continue;
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= w2 || yy >= h2 || !solid[yy * w2 + xx]) continue;
+      const j = (yy * w2 + xx) * 4; r += src[j]; g += src[j + 1]; b += src[j + 2]; n++;
+    }
+    if (n) { const i = (y * w2 + x) * 4; out.data[i] = r / n; out.data[i + 1] = g / n; out.data[i + 2] = b / n; }
   }
   pctx.putImageData(out, 0, 0);
   const image = doc.createElementNS(SVG, "image");
-  image.setAttribute("href", pic.toDataURL("image/png"));
+  image.setAttribute("href", pic.toDataURL("image/jpeg", 0.92));
   image.setAttribute("x", 0); image.setAttribute("y", 0);
   image.setAttribute("width", w); image.setAttribute("height", h);
   image.setAttribute("clip-path", "url(#shapes)");
