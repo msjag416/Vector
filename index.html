@@ -158,6 +158,7 @@
     </div>
   </div>
   <label class="check"><input type="checkbox" id="cleanColors" checked> Clean up colors (best for text, logos and flat art)</label>
+  <label class="check"><input type="checkbox" id="smooth"> Smooth shading (fits a real gradient to each shape; best with 2 to 8 colors)</label>
   <label class="check"><input type="checkbox" id="removeBg"> Remove background (the color around the edges)</label>
 
   <button class="main" id="go">Generate</button>
@@ -495,7 +496,10 @@ const CLEAN_SIZE = 2048;
 
 function traceToSvg(img) {
   const d = detailSettings[$("detail").value];
-  const clean = $("cleanColors").checked;
+  // Smooth shading needs clean flat regions to fit gradients into, so it turns on color clean-up.
+  const smooth = $("smooth").checked;
+  const clean = $("cleanColors").checked || smooth;
+  const colors = Number($("colors").value);
   // Shrink large photos. Small pictures stay as they are; the curves come out smooth either way.
   const longest = Math.max(img.naturalWidth, img.naturalHeight);
   const scale = clean ? CLEAN_SIZE / longest : Math.min(1, d.maxSize / longest);
@@ -509,18 +513,19 @@ function traceToSvg(img) {
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h).data;
-  const palette = clean ? cleanColors(pixels, Number($("colors").value)) : undefined;
+  const palette = clean ? cleanColors(pixels, colors) : undefined;
   const bg = backgroundColor(pixels, w, h);
 
   const svg = VTracer.vectorize_rgba(new Uint8Array(pixels.buffer), w, h, {
     // "stacked" piles shapes on top of each other. "cutout" cuts real holes instead, which
-    // matters when the background is removed (so the hole in a letter O stays open).
-    mode: "spline", hierarchical: $("removeBg").checked ? "cutout" : "stacked",
-    maxColors: Number($("colors").value), palette,
+    // matters when the background is removed (so the hole in a letter O stays open) and for
+    // smooth shading (so each shape is measured from its own pixels only).
+    mode: "spline", hierarchical: ($("removeBg").checked || smooth) ? "cutout" : "stacked",
+    maxColors: colors, palette,
     filterSpeckle: d.speckle, colorPrecision: d.precision, layerDifference: d.layerGap,
     cornerThreshold: 60, lengthThreshold: 4, spliceThreshold: 45,
   });
-  return finishSvg(svg, w, h, bg);
+  return finishSvg(svg, w, h, bg, smooth ? canvas : null);
 }
 
 // The background is whatever color is most common along the picture's edges.
@@ -597,28 +602,118 @@ function cleanColors(px, maxColors) {
 
 // Adds the scaling info vector apps need, sets a good starting size,
 // and removes the background color if that box is ticked.
-function finishSvg(svg, w, h, bg) {
+function finishSvg(svg, w, h, bg, shadingSource) {
   const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
   const root = doc.documentElement;
   const k = OUTPUT_SIZE / Math.max(w, h);
   root.setAttribute("viewBox", "0 0 " + w + " " + h);
   root.setAttribute("width", Math.round(w * k));
   root.setAttribute("height", Math.round(h * k));
-  if ($("removeBg").checked) {
+  const removeBg = $("removeBg").checked;
+  if (removeBg) {
     // Delete every shape whose color is close to the background color.
     doc.querySelectorAll("path").forEach((p) => {
       const m = (p.getAttribute("fill") || "").match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
       if (!m) return;
       const dist = Math.abs(parseInt(m[1], 16) - bg[0]) + Math.abs(parseInt(m[2], 16) - bg[1]) + Math.abs(parseInt(m[3], 16) - bg[2]);
-      if (dist < 60) { p.remove(); return; }
-      // Cutout mode can leave hairline gaps where shapes meet. A thin outline in the
-      // shape's own color covers them.
+      if (dist < 60) p.remove();
+    });
+  }
+  if (removeBg || shadingSource) {
+    // Cutout mode can leave hairline gaps where shapes meet. A thin outline in the
+    // shape's own color covers them.
+    doc.querySelectorAll("path").forEach((p) => {
       p.setAttribute("stroke", p.getAttribute("fill"));
       p.setAttribute("stroke-width", "1");
       p.setAttribute("stroke-linejoin", "round");
     });
   }
+  if (shadingSource) fitGradients(doc, shadingSource);
   return new XMLSerializer().serializeToString(root);
+}
+
+// ---------- Smooth shading ----------
+// For each traced shape, looks at the original pixels inside it, works out which way the
+// color changes and how much, and replaces the flat fill with a real SVG gradient.
+// Shapes whose color barely changes keep their flat fill.
+function fitGradients(doc, canvas) {
+  const SVG = "http://www.w3.org/2000/svg";
+  const root = doc.documentElement;
+  // Work on a small copy of the picture; a gradient doesn't need full resolution to measure.
+  const S = 512 / Math.max(canvas.width, canvas.height);
+  const sw = Math.round(canvas.width * S), sh = Math.round(canvas.height * S);
+  const pic = document.createElement("canvas"); pic.width = sw; pic.height = sh;
+  pic.getContext("2d").drawImage(canvas, 0, 0, sw, sh);
+  const src = pic.getContext("2d").getImageData(0, 0, sw, sh).data;
+  const maskCanvas = document.createElement("canvas"); maskCanvas.width = sw; maskCanvas.height = sh;
+  const mctx = maskCanvas.getContext("2d");
+  const defs = doc.createElementNS(SVG, "defs");
+  root.insertBefore(defs, root.firstChild);
+
+  doc.querySelectorAll("path").forEach((p, idx) => {
+    // 1. Which pixels are inside this shape?
+    mctx.clearRect(0, 0, sw, sh);
+    mctx.save(); mctx.scale(S, S); mctx.fill(new Path2D(p.getAttribute("d"))); mctx.restore();
+    const mask = mctx.getImageData(0, 0, sw, sh).data;
+    const xs = [], ys = [], cols = [[], [], []];
+    for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+      const i = (y * sw + x) * 4;
+      if (mask[i + 3] > 128) { xs.push(x); ys.push(y); cols[0].push(src[i]); cols[1].push(src[i + 1]); cols[2].push(src[i + 2]); }
+    }
+    const n = xs.length;
+    if (n < 200) return;
+
+    // 2. Fit "color = base + u*x + v*y" for red, green and blue (least squares).
+    const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let sxx = 0, sxy = 0, syy = 0;
+    for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxx += dx * dx; sxy += dx * dy; syy += dy * dy; }
+    const det = sxx * syy - sxy * sxy;
+    if (det < 1e-6) return;
+    const slopes = cols.map((c) => {
+      const mc = c.reduce((a, b) => a + b, 0) / n;
+      let sxc = 0, syc = 0;
+      for (let i = 0; i < n; i++) { const dc = c[i] - mc; sxc += (xs[i] - mx) * dc; syc += (ys[i] - my) * dc; }
+      return [(syy * sxc - sxy * syc) / det, (sxx * syc - sxy * sxc) / det];
+    });
+
+    // 3. The gradient direction is the one the three color slopes agree on most.
+    let a = 0, b = 0, c = 0;
+    for (const [u, v] of slopes) { a += u * u; b += u * v; c += v * v; }
+    const lambda = (a + c) / 2 + Math.sqrt(((a - c) / 2) ** 2 + b * b);
+    let dx = b, dy = lambda - a;
+    if (Math.abs(dx) + Math.abs(dy) < 1e-9) { dx = lambda - c; dy = b; }
+    const len = Math.hypot(dx, dy) || 1; dx /= len; dy /= len;
+
+    // 4. Measure the average color at several points along that direction.
+    let tmin = Infinity, tmax = -Infinity;
+    const ts = new Array(n);
+    for (let i = 0; i < n; i++) { const t = (xs[i] - mx) * dx + (ys[i] - my) * dy; ts[i] = t; if (t < tmin) tmin = t; if (t > tmax) tmax = t; }
+    if (tmax - tmin < 4) return;
+    const STOPS = 6, sums = Array.from({ length: STOPS }, () => [0, 0, 0, 0]);
+    for (let i = 0; i < n; i++) {
+      const s = sums[Math.min(STOPS - 1, Math.floor((ts[i] - tmin) / (tmax - tmin) * STOPS))];
+      s[0] += cols[0][i]; s[1] += cols[1][i]; s[2] += cols[2][i]; s[3]++;
+    }
+    const stops = sums.filter((s) => s[3] > 0).map((s) => s.slice(0, 3).map((v) => Math.round(v / s[3])));
+    const change = Math.max(...stops.map((s) => Math.abs(s[0] - stops[0][0]) + Math.abs(s[1] - stops[0][1]) + Math.abs(s[2] - stops[0][2])));
+    if (change < 24) return;   // nearly flat: keep the plain fill
+
+    // 5. Write the gradient into the file and point this shape at it.
+    const g = doc.createElementNS(SVG, "linearGradient");
+    g.setAttribute("id", "g" + idx);
+    g.setAttribute("gradientUnits", "userSpaceOnUse");
+    g.setAttribute("x1", ((mx + dx * tmin) / S).toFixed(1)); g.setAttribute("y1", ((my + dy * tmin) / S).toFixed(1));
+    g.setAttribute("x2", ((mx + dx * tmax) / S).toFixed(1)); g.setAttribute("y2", ((my + dy * tmax) / S).toFixed(1));
+    stops.forEach((s, i) => {
+      const stop = doc.createElementNS(SVG, "stop");
+      stop.setAttribute("offset", (i / (stops.length - 1)).toFixed(2));
+      stop.setAttribute("stop-color", "#" + s.map((v) => v.toString(16).padStart(2, "0")).join(""));
+      g.appendChild(stop);
+    });
+    defs.appendChild(g);
+    p.setAttribute("fill", "url(#g" + idx + ")");
+    if (p.hasAttribute("stroke")) p.setAttribute("stroke", "url(#g" + idx + ")");
+  });
 }
 
 function showResult() {
