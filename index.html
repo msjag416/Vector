@@ -344,9 +344,23 @@ function fileToDataUrl(file) {
   });
 }
 
+// Redraws any picture the browser can open (including iPad HEIC photos) as a PNG,
+// because Topaz only accepts JPEG, PNG or WebP.
+async function toPng(blob) {
+  if (blob.type === "image/png") return blob;
+  const img = await loadImage(URL.createObjectURL(blob)).catch(() => {
+    throw new Error("This browser can't open that kind of file. Please save the picture as a JPG or PNG and try again.");
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.getContext("2d").drawImage(img, 0, 0);
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+}
+
 async function uploadToKie(file) {
   const headers = kieHeaders();
-  const body = JSON.stringify({ base64Data: await fileToDataUrl(file), uploadPath: "vector-maker", fileName: file.name });
+  const ext = (file.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  const body = JSON.stringify({ base64Data: await fileToDataUrl(file), uploadPath: "vector-maker", fileName: "picture-" + Date.now() + "." + ext });
   // KIE's documentation lists two upload addresses; try the main one, then the other.
   const hosts = ["https://kieai.redpandaai.co/api/file-base64-upload", "https://api.kie.ai/api/v1/file-base64-upload"];
   let lastError = "";
@@ -372,7 +386,9 @@ $("upFile").onchange = () => {
 
 // Enlarges a picture by the given factor. Topaz does at most 4x per pass, so bigger
 // factors run it more than once, feeding each result back in (8x = 4x then 2x).
-async function upscaleWithTopaz(file, factor) {
+async function upscaleWithTopaz(original, factor) {
+  setStatus("Preparing your picture...");
+  const file = await toPng(original);
   if (file.size > 10 * 1024 * 1024) throw new Error("That picture is over 10 MB. Please use a smaller one.");
   const img = await loadImage(URL.createObjectURL(file));
   const longest = Math.max(img.naturalWidth, img.naturalHeight);
