@@ -51,6 +51,12 @@
   .box h3 { margin: 0 0 8px; font-size: 14px; color: var(--muted); font-weight: 500; }
   .box img, .box svg { width: 100%; height: auto; display: block; border-radius: 6px; }
   .checker { background: repeating-conic-gradient(#ddd 0 25%, #fff 0 50%) 0 0 / 20px 20px; border-radius: 6px; }
+  /* The preview scrolls when zoomed in, so you can drag around to check edges. */
+  #svgOut { overflow: auto; max-height: 70vh; }
+  #svgOut svg { width: 100%; height: auto; }
+  .zoom { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .zoom input { flex: 1; }
+  .actions select { flex: 0 0 auto; width: auto; padding: 12px; }
   .actions { display: flex; gap: 12px; margin-top: 12px; }
   .actions button {
     flex: 1; padding: 14px; border-radius: 10px; border: 1px solid var(--line);
@@ -132,11 +138,27 @@
   <div class="result hidden" id="result">
     <div class="compare">
       <div class="box"><h3>Original picture</h3><img id="original" alt=""></div>
-      <div class="box"><h3>Vector (SVG)</h3><div class="checker" id="svgOut"></div></div>
+      <div class="box">
+        <h3>Vector (SVG)</h3>
+        <div class="checker" id="svgOut"></div>
+        <div class="zoom">
+          <span>Zoom</span>
+          <input type="range" id="zoom" min="1" max="20" step="1" value="1">
+          <span id="zoomLabel">1x</span>
+        </div>
+      </div>
     </div>
     <div class="actions">
       <button id="retrace">Re-trace with new settings</button>
       <button class="primary" id="download">Download SVG</button>
+    </div>
+    <div class="actions">
+      <select id="pngSize">
+        <option value="1024">1024 px</option>
+        <option value="2048" selected>2048 px</option>
+        <option value="4096">4096 px</option>
+      </select>
+      <button id="downloadPng">Download PNG</button>
     </div>
   </div>
 
@@ -300,7 +322,9 @@ function traceToSvg(img) {
   const pixels = ctx.getImageData(0, 0, w, h).data;
 
   const svg = VTracer.vectorize_rgba(new Uint8Array(pixels.buffer), w, h, {
-    mode: "spline", hierarchical: "stacked",
+    // "stacked" piles shapes on top of each other. "cutout" cuts real holes instead, which
+    // matters when the white background is removed (so the hole in a letter O stays open).
+    mode: "spline", hierarchical: $("removeWhite").checked ? "cutout" : "stacked",
     maxColors: Number($("colors").value),
     filterSpeckle: d.speckle, colorPrecision: d.precision, layerDifference: d.layerGap,
     cornerThreshold: 60, lengthThreshold: 4, spliceThreshold: 45,
@@ -330,7 +354,17 @@ function showResult() {
   $("original").src = sourceImage.src;
   $("svgOut").innerHTML = lastSvg;
   $("result").classList.remove("hidden");
+  applyZoom();
 }
+
+// Zoom slider: makes the preview bigger than its box, so you scroll around inside it.
+function applyZoom() {
+  const z = Number($("zoom").value);
+  const svg = $("svgOut").querySelector("svg");
+  if (svg) svg.style.width = (z * 100) + "%";
+  $("zoomLabel").textContent = z + "x";
+}
+$("zoom").oninput = applyZoom;
 
 // Waits a moment so the "Working..." message appears before tracing starts.
 const pause = () => new Promise((r) => setTimeout(r, 50));
@@ -380,6 +414,29 @@ $("download").onclick = () => {
   a.href = URL.createObjectURL(blob);
   a.download = "vector-" + Date.now() + ".svg";
   a.click();
+};
+
+// PNG: draws the vector onto a canvas at the chosen size, then saves it.
+// If the white background was removed, the PNG is see-through there too.
+$("downloadPng").onclick = async () => {
+  if (!lastSvg) return;
+  try {
+    setStatus("Making your PNG...");
+    const img = await loadImage("data:image/svg+xml;charset=utf-8," + encodeURIComponent(lastSvg));
+    const size = Number($("pngSize").value);
+    const k = size / Math.max(img.naturalWidth, img.naturalHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(img.naturalWidth * k);
+    canvas.height = Math.round(img.naturalHeight * k);
+    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = "vector-" + Date.now() + ".png";
+    a.click();
+    setStatus("PNG saved (" + canvas.width + " x " + canvas.height + " pixels).");
+  } catch (e) {
+    setStatus("Couldn't make the PNG: " + e.message, true);
+  }
 };
 </script>
 </body>

@@ -27,8 +27,9 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 2. The picture is drawn onto a hidden canvas with a white background behind any see-through parts.
 3. VTracer groups similar colors (up to the number chosen in Colors), then draws smooth curves around each color area. Shapes are stacked on top of each other, so there are no cracks between them. The Detail setting controls how small a shape can be before it's thrown away and how closely two colors must match to be treated as one.
 4. The file gets a `viewBox` (the scaling info vector apps need to enlarge it cleanly) and a starting size of 2048 points on its longest side.
-5. If "Remove white background" is ticked, any near-white shapes are deleted so the background is see-through.
-6. The result is shown next to the original. "Re-trace" runs steps 1 to 5 again with new settings without asking the AI for a new picture. "Download SVG" saves the file.
+5. If "Remove white background" is ticked, any near-white shapes are deleted so the background is see-through. In this case VTracer runs in "cutout" mode (real holes in shapes) instead of "stacked" mode, so the hole in a letter O stays open instead of showing the color beneath it.
+6. The result is shown next to the original. A Zoom slider (1x to 20x) makes the preview larger than its box so you can scroll around and check edges. "Re-trace" runs steps 1 to 5 again with new settings without asking the AI for a new picture. "Download SVG" saves the file.
+7. "Download PNG" draws the vector onto a hidden canvas at the chosen size (1024, 2048 or 4096 pixels on the longest side) and saves that as a normal picture. If the white background was removed, the PNG is see-through there too.
 
 Why VTracer: the first version used a tool called ImageTracer, which copied the tiny pixel steps along every edge. That looked rough when enlarged. VTracer fits smooth curves instead.
 
