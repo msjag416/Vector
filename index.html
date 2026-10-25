@@ -541,16 +541,19 @@ function cleanColors(px, maxColors) {
   // At 32 or 64 colors the person wants shading kept (painterly pictures), so the halo
   // filter is skipped and near-duplicate colors are merged less eagerly.
   const keepShades = maxColors >= 32;
-  const mergeDist = keepShades ? 24 : 48;
+  const mergeDist = keepShades ? 16 : 48;
+  // Colors are counted in coarse steps (16 levels per channel), or finer steps (32 levels)
+  // when shading matters, so smooth gradients keep more of their bands.
+  const shift = keepShades ? 3 : 4, step = keepShades ? 255 / 31 : 17;
 
-  // 1. Count colors in coarse steps of 17, so grain doesn't split one color into dozens.
+  // 1. Count colors in coarse steps, so grain doesn't split one color into dozens.
   const hist = new Map();
   for (let i = 0; i < px.length; i += 4) {
-    const k = ((px[i] >> 4) << 8) | ((px[i + 1] >> 4) << 4) | (px[i + 2] >> 4);
+    const k = ((px[i] >> shift) << 16) | ((px[i + 1] >> shift) << 8) | (px[i + 2] >> shift);
     hist.set(k, (hist.get(k) || 0) + 1);
   }
   const bins = [...hist.entries()].sort((a, b) => b[1] - a[1])
-    .map(([k, n]) => ({ c: [((k >> 8) & 15) * 17, ((k >> 4) & 15) * 17, (k & 15) * 17], n }));
+    .map(([k, n]) => ({ c: [((k >> 16) & 255) * step, ((k >> 8) & 255) * step, (k & 255) * step], n }));
 
   // 2. Merge near-duplicates and drop colors that cover less than 0.05% of the picture.
   const merged = [];
@@ -607,7 +610,12 @@ function finishSvg(svg, w, h, bg) {
       const m = (p.getAttribute("fill") || "").match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
       if (!m) return;
       const dist = Math.abs(parseInt(m[1], 16) - bg[0]) + Math.abs(parseInt(m[2], 16) - bg[1]) + Math.abs(parseInt(m[3], 16) - bg[2]);
-      if (dist < 60) p.remove();
+      if (dist < 60) { p.remove(); return; }
+      // Cutout mode can leave hairline gaps where shapes meet. A thin outline in the
+      // shape's own color covers them.
+      p.setAttribute("stroke", p.getAttribute("fill"));
+      p.setAttribute("stroke-width", "1");
+      p.setAttribute("stroke-linejoin", "round");
     });
   }
   return new XMLSerializer().serializeToString(root);
