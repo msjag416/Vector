@@ -87,6 +87,7 @@
         <select id="style">
           <option value="flat">Flat illustration</option>
           <option value="logo">Logo or icon</option>
+          <option value="lettering">Lettering (words as the design)</option>
           <option value="sticker">Sticker</option>
           <option value="line">Line art</option>
         </select>
@@ -131,7 +132,7 @@
     </div>
   </div>
   <label class="check"><input type="checkbox" id="cleanColors" checked> Clean up colors (best for text, logos and flat art)</label>
-  <label class="check"><input type="checkbox" id="removeWhite"> Remove white background</label>
+  <label class="check"><input type="checkbox" id="removeBg"> Remove background (the color around the edges)</label>
 
   <button class="main" id="go">Generate</button>
   <div class="status" id="status"></div>
@@ -227,6 +228,7 @@ $("file").onchange = () => {
 const styleWords = {
   flat: "flat vector illustration, simple clean shapes, solid flat colors, no gradients, no texture, no shadows, plain white background",
   logo: "minimal vector logo icon, bold simple shapes, few solid colors, no gradients, centered, plain white background",
+  lettering: "typographic logo design, bold rounded lettering, letters shaped to fit the design, solid flat colors, clean vector edges, no gradients, no texture, no shadows, centered on a plain solid background",
   sticker: "die-cut sticker design, flat vector art, thick outlines, solid colors, no gradients, plain white background",
   line: "clean black line art, vector outline drawing, no shading, no fill, plain white background",
 };
@@ -328,16 +330,27 @@ function traceToSvg(img) {
   ctx.drawImage(img, 0, 0, w, h);
   const pixels = ctx.getImageData(0, 0, w, h).data;
   const palette = clean ? cleanColors(pixels, Number($("colors").value)) : undefined;
+  const bg = backgroundColor(pixels, w, h);
 
   const svg = VTracer.vectorize_rgba(new Uint8Array(pixels.buffer), w, h, {
     // "stacked" piles shapes on top of each other. "cutout" cuts real holes instead, which
-    // matters when the white background is removed (so the hole in a letter O stays open).
-    mode: "spline", hierarchical: $("removeWhite").checked ? "cutout" : "stacked",
+    // matters when the background is removed (so the hole in a letter O stays open).
+    mode: "spline", hierarchical: $("removeBg").checked ? "cutout" : "stacked",
     maxColors: Number($("colors").value), palette,
     filterSpeckle: d.speckle, colorPrecision: d.precision, layerDifference: d.layerGap,
     cornerThreshold: 60, lengthThreshold: 4, spliceThreshold: 45,
   });
-  return finishSvg(svg, w, h);
+  return finishSvg(svg, w, h, bg);
+}
+
+// The background is whatever color is most common along the picture's edges.
+function backgroundColor(px, w, h) {
+  const count = new Map();
+  const add = (x, y) => { const i = (y * w + x) * 4; const k = (px[i] << 16) | (px[i + 1] << 8) | px[i + 2]; count.set(k, (count.get(k) || 0) + 1); };
+  for (let x = 0; x < w; x += 2) { add(x, 0); add(x, h - 1); }
+  for (let y = 0; y < h; y += 2) { add(0, y); add(w - 1, y); }
+  const k = [...count.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  return [(k >> 16) & 255, (k >> 8) & 255, k & 255];
 }
 
 // Finds the picture's real colors and snaps every pixel to the nearest one.
@@ -396,18 +409,21 @@ function cleanColors(px, maxColors) {
 }
 
 // Adds the scaling info vector apps need, sets a good starting size,
-// and removes the white background if that box is ticked.
-function finishSvg(svg, w, h) {
+// and removes the background color if that box is ticked.
+function finishSvg(svg, w, h, bg) {
   const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
   const root = doc.documentElement;
   const k = OUTPUT_SIZE / Math.max(w, h);
   root.setAttribute("viewBox", "0 0 " + w + " " + h);
   root.setAttribute("width", Math.round(w * k));
   root.setAttribute("height", Math.round(h * k));
-  if ($("removeWhite").checked) {
+  if ($("removeBg").checked) {
+    // Delete every shape whose color is close to the background color.
     doc.querySelectorAll("path").forEach((p) => {
       const m = (p.getAttribute("fill") || "").match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-      if (m && parseInt(m[1], 16) > 235 && parseInt(m[2], 16) > 235 && parseInt(m[3], 16) > 235) p.remove();
+      if (!m) return;
+      const dist = Math.abs(parseInt(m[1], 16) - bg[0]) + Math.abs(parseInt(m[2], 16) - bg[1]) + Math.abs(parseInt(m[3], 16) - bg[2]);
+      if (dist < 60) p.remove();
     });
   }
   return new XMLSerializer().serializeToString(root);
