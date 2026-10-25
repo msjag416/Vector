@@ -347,7 +347,7 @@ function fileToDataUrl(file) {
 // Redraws any picture the browser can open (including iPad HEIC photos) as a PNG,
 // because Topaz only accepts JPEG, PNG or WebP.
 async function toPng(blob) {
-  if (blob.type === "image/png") return blob;
+  if (["image/png", "image/jpeg", "image/webp"].includes(blob.type)) return blob;
   const img = await loadImage(URL.createObjectURL(blob)).catch(() => {
     throw new Error("This browser can't open that kind of file. Please save the picture as a JPG or PNG and try again.");
   });
@@ -402,10 +402,27 @@ async function upscaleWithTopaz(original, factor) {
     const label = passes.length > 1 ? " (pass " + (i + 1) + " of " + passes.length + ")" : "";
     setStatus("Uploading your picture to KIE.ai..." + label);
     const imageUrl = await uploadToKie(picture);
-    picture = await runKieJob({
+    const topaz = () => runKieJob({
       model: "topaz/image-upscale",
       input: { image_url: imageUrl, upscale_factor: String(passes[i]) },
     }, "Topaz is sharpening and enlarging your picture..." + label);
+    try {
+      picture = await topaz();
+    } catch (e) {
+      // KIE sometimes answers "internal error" for no reason. Try Topaz once more,
+      // then fall back to KIE's other upscaler (Recraft Crisp) so the job still finishes.
+      if (!/internal error/i.test(e.message)) throw e;
+      try {
+        setStatus("KIE.ai hiccuped. Trying Topaz once more..." + label);
+        picture = await topaz();
+      } catch (e2) {
+        if (!/internal error/i.test(e2.message)) throw e2;
+        picture = await runKieJob({
+          model: "recraft/crisp-upscale",
+          input: { image: imageUrl },
+        }, "Topaz is down, using Recraft Crisp instead..." + label);
+      }
+    }
     if (picture.size > 10 * 1024 * 1024 && i < passes.length - 1) {
       throw new Error("The picture grew past KIE.ai's 10 MB upload limit after pass " + (i + 1) + ". Try a smaller factor.");
     }
