@@ -109,6 +109,7 @@
     <label>Your image or photo</label>
     <div class="drop" id="drop">Tap to choose an image</div>
     <input type="file" id="file" accept="image/*" class="hidden">
+    <label class="check"><input type="checkbox" id="upscaleFirst"> Upscale 2x with Topaz first (sharper edges to trace, costs a few cents, needs your KIE.ai key)</label>
   </section>
 
   <!-- Tab 3: AI upscale (KIE.ai Topaz) -->
@@ -120,8 +121,11 @@
     <select id="upScale">
       <option value="2" selected>2x (double the size)</option>
       <option value="4">4x (four times the size)</option>
+      <option value="8">8x (2 passes)</option>
+      <option value="16">16x (3 passes, small pictures only)</option>
+      <option value="32">32x (4 passes, very small pictures only)</option>
     </select>
-    <div class="hint">Uses Topaz through your KIE.ai key. Costs a few cents per picture and takes about 10 to 30 seconds.</div>
+    <div class="hint">Uses Topaz through your KIE.ai key. Each pass costs a few cents and takes about 10 to 30 seconds. Topaz does up to 4x per pass, so 8x and up run it more than once. The finished picture can't be over 20,000 pixels on its longest side.</div>
     <button class="main" id="upGo">Upscale with AI</button>
   </section>
 
@@ -187,6 +191,7 @@
         <option value="1024">1024 px</option>
         <option value="2048" selected>2048 px</option>
         <option value="4096">4096 px</option>
+        <option value="8192">8192 px (may fail on older iPads)</option>
       </select>
       <button id="downloadPng">Download PNG</button>
     </div>
@@ -365,18 +370,39 @@ $("upFile").onchange = () => {
   if (f) $("upDrop").innerHTML = '<img src="' + URL.createObjectURL(f) + '" alt="">';
 };
 
+// Enlarges a picture by the given factor. Topaz does at most 4x per pass, so bigger
+// factors run it more than once, feeding each result back in (8x = 4x then 2x).
+async function upscaleWithTopaz(file, factor) {
+  if (file.size > 10 * 1024 * 1024) throw new Error("That picture is over 10 MB. Please use a smaller one.");
+  const img = await loadImage(URL.createObjectURL(file));
+  const longest = Math.max(img.naturalWidth, img.naturalHeight);
+  if (longest * factor > 20000) {
+    throw new Error("At " + factor + "x this picture would be " + (longest * factor) + " pixels wide. KIE.ai's limit is 20,000. Pick a smaller factor or a smaller picture.");
+  }
+  const passes = [];
+  for (let left = factor; left > 1; left /= Math.min(4, left)) passes.push(Math.min(4, left));
+  let picture = file;
+  for (let i = 0; i < passes.length; i++) {
+    const label = passes.length > 1 ? " (pass " + (i + 1) + " of " + passes.length + ")" : "";
+    setStatus("Uploading your picture to KIE.ai..." + label);
+    const imageUrl = await uploadToKie(picture);
+    picture = await runKieJob({
+      model: "topaz/image-upscale",
+      input: { image_url: imageUrl, upscale_factor: String(passes[i]) },
+    }, "Topaz is sharpening and enlarging your picture..." + label);
+    if (picture.size > 10 * 1024 * 1024 && i < passes.length - 1) {
+      throw new Error("The picture grew past KIE.ai's 10 MB upload limit after pass " + (i + 1) + ". Try a smaller factor.");
+    }
+  }
+  return picture;
+}
+
 $("upGo").onclick = async () => {
   const file = $("upFile").files[0];
   $("upGo").disabled = true;
   try {
     if (!file) throw new Error("Please choose a picture first.");
-    if (file.size > 10 * 1024 * 1024) throw new Error("That picture is over 10 MB. Please use a smaller one.");
-    setStatus("Uploading your picture to KIE.ai...");
-    const imageUrl = await uploadToKie(file);
-    upscaledBlob = await runKieJob({
-      model: "topaz/image-upscale",
-      input: { image_url: imageUrl, upscale_factor: $("upScale").value },
-    }, "Topaz is sharpening and enlarging your picture...");
+    upscaledBlob = await upscaleWithTopaz(file, Number($("upScale").value));
     $("upBefore").src = URL.createObjectURL(file);
     $("upAfter").src = URL.createObjectURL(upscaledBlob);
     $("upResult").classList.remove("hidden");
@@ -590,6 +616,7 @@ $("go").onclick = async () => {
     } else {
       blob = $("file").files[0];
       if (!blob) throw new Error("Please choose an image first.");
+      if ($("upscaleFirst").checked) blob = await upscaleWithTopaz(blob, 2);
     }
     sourceImage = await loadImage(URL.createObjectURL(blob));
     await traceAndShow();

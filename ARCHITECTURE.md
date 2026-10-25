@@ -21,7 +21,7 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 
 **From an image.** The person picks a picture from their device. It never leaves the device.
 
-**Upscale (third tab).** This doesn't make a vector. It sends a picture to KIE.ai's Topaz upscaler (the Topaz Gigapixel engine) and gets back a 2x or 4x larger, sharper picture. Topaz needs the picture at a web address, so the app first sends it to KIE's upload service (`file-base64-upload`), then starts a `topaz/image-upscale` job and checks back every 2 seconds, the same way the prompt tab does. Needs the person's KIE.ai key and costs a few cents per picture. Pictures must be JPEG, PNG or WebP under 10 MB.
+**Upscale (third tab).** This doesn't make a vector. It sends a picture to KIE.ai's Topaz upscaler (the Topaz Gigapixel engine) and gets back a 2x or 4x larger, sharper picture. Topaz needs the picture at a web address, so the app first sends it to KIE's upload service (`file-base64-upload`), then starts a `topaz/image-upscale` job and checks back every 2 seconds, the same way the prompt tab does. Topaz does at most 4x per pass, so 8x, 16x and 32x run it more than once, feeding each result back in (8x is 4x then 2x). Each pass costs a few cents. KIE caps the finished picture at 20,000 pixels on the longest side and uploads at 10 MB, and the app checks both before starting. The "From an image" tab also has an "Upscale 2x with Topaz first" checkbox that runs one pass before tracing, which gives the tracer cleaner edges on small or blurry pictures. Pictures must be JPEG, PNG or WebP under 10 MB.
 
 ## Converting to vector (the prompt and image tabs end here)
 
@@ -32,7 +32,7 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 5. The file gets a `viewBox` (the scaling info vector apps need to enlarge it cleanly) and a starting size of 2048 points on its longest side.
 6. If "Remove background" is ticked, the app finds the background color (the most common color along the picture's four edges) and deletes every shape close to that color, so the background is see-through. This works for white, black, cream or any other solid background. In this case VTracer runs in "cutout" mode (real holes in shapes) instead of "stacked" mode, so the hole in a letter O stays open instead of showing the color beneath it.
 7. The result is shown next to the original. A Zoom slider (1x to 20x) makes the preview larger than its box so you can scroll around and check edges. "Re-trace" runs steps 1 to 5 again with new settings without asking the AI for a new picture. "Download SVG" saves the file.
-8. "Download PNG" draws the vector onto a hidden canvas at the chosen size (1024, 2048 or 4096 pixels on the longest side) and saves that as a normal picture. If the background was removed, the PNG is see-through there too.
+8. "Download PNG" draws the vector onto a hidden canvas at the chosen size (1024, 2048, 4096 or 8192 pixels on the longest side; 8192 may fail on older iPads because of browser memory limits) and saves that as a normal picture. If the background was removed, the PNG is see-through there too.
 
 Why VTracer: the first version used a tool called ImageTracer, which copied the tiny pixel steps along every edge. That looked rough when enlarged. VTracer fits smooth curves instead.
 
