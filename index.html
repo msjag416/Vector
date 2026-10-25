@@ -155,7 +155,7 @@
   </details>
 </main>
 
-<script src="imagetracer.js"></script>
+<script src="vtracer.js"></script>
 <script>
 // ---------- Small helpers ----------
 const $ = (id) => document.getElementById(id);
@@ -271,44 +271,59 @@ function loadImage(src) {
   });
 }
 
-// Detail level -> tracing settings. Bigger size and smaller numbers = more detail.
+// Detail level -> tracing settings.
+// maxSize: large pictures are shrunk to this many pixels on their longest side so tracing stays fast.
+// speckle: shapes smaller than this are thrown away as noise.
+// precision and layerGap: how closely two colors must match to count as the same color.
 const detailSettings = {
-  low:    { maxSize: 500,  ltres: 2,   qtres: 2,   pathomit: 32, blurradius: 3 },
-  medium: { maxSize: 800,  ltres: 1,   qtres: 1,   pathomit: 12, blurradius: 1 },
-  high:   { maxSize: 1200, ltres: 0.5, qtres: 0.5, pathomit: 4,  blurradius: 0 },
+  low:    { maxSize: 800,  speckle: 16, precision: 5, layerGap: 32 },
+  medium: { maxSize: 1024, speckle: 8,  precision: 6, layerGap: 16 },
+  high:   { maxSize: 1280, speckle: 6,  precision: 7, layerGap: 12 },
 };
+
+// The downloaded file opens this many points wide (or tall) in a vector app.
+const OUTPUT_SIZE = 2048;
 
 function traceToSvg(img) {
   const d = detailSettings[$("detail").value];
-  // Shrink large photos so tracing stays fast on a phone or iPad.
+  // Shrink large photos. Small pictures stay as they are; the curves come out smooth either way.
   const scale = Math.min(1, d.maxSize / Math.max(img.naturalWidth, img.naturalHeight));
   const w = Math.round(img.naturalWidth * scale);
   const h = Math.round(img.naturalHeight * scale);
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
   ctx.fillStyle = "#fff";            // see-through areas become white
   ctx.fillRect(0, 0, w, h);
   ctx.drawImage(img, 0, 0, w, h);
-  const pixels = ctx.getImageData(0, 0, w, h);
+  const pixels = ctx.getImageData(0, 0, w, h).data;
 
-  let svg = ImageTracer.imagedataToSVG(pixels, {
-    numberofcolors: Number($("colors").value),
-    ltres: d.ltres, qtres: d.qtres, pathomit: d.pathomit, blurradius: d.blurradius,
-    colorquantcycles: 3, strokewidth: 1, roundcoords: 1, viewbox: true,
+  const svg = VTracer.vectorize_rgba(new Uint8Array(pixels.buffer), w, h, {
+    mode: "spline", hierarchical: "stacked",
+    maxColors: Number($("colors").value),
+    filterSpeckle: d.speckle, colorPrecision: d.precision, layerDifference: d.layerGap,
+    cornerThreshold: 60, lengthThreshold: 4, spliceThreshold: 45,
   });
-  if ($("removeWhite").checked) svg = removeWhiteShapes(svg);
-  return svg;
+  return finishSvg(svg, w, h);
 }
 
-// Deletes the near-white shapes so the background becomes see-through.
-function removeWhiteShapes(svg) {
+// Adds the scaling info vector apps need, sets a good starting size,
+// and removes the white background if that box is ticked.
+function finishSvg(svg, w, h) {
   const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
-  doc.querySelectorAll("path").forEach((p) => {
-    const m = (p.getAttribute("fill") || "").match(/rgb\((\d+),(\d+),(\d+)\)/);
-    if (m && +m[1] > 235 && +m[2] > 235 && +m[3] > 235) p.remove();
-  });
-  return new XMLSerializer().serializeToString(doc);
+  const root = doc.documentElement;
+  const k = OUTPUT_SIZE / Math.max(w, h);
+  root.setAttribute("viewBox", "0 0 " + w + " " + h);
+  root.setAttribute("width", Math.round(w * k));
+  root.setAttribute("height", Math.round(h * k));
+  if ($("removeWhite").checked) {
+    doc.querySelectorAll("path").forEach((p) => {
+      const m = (p.getAttribute("fill") || "").match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+      if (m && parseInt(m[1], 16) > 235 && parseInt(m[2], 16) > 235 && parseInt(m[3], 16) > 235) p.remove();
+    });
+  }
+  return new XMLSerializer().serializeToString(root);
 }
 
 function showResult() {
@@ -323,6 +338,7 @@ const pause = () => new Promise((r) => setTimeout(r, 50));
 async function traceAndShow() {
   setStatus("Converting to vector...");
   await pause();
+  await VTracer.init();
   lastSvg = traceToSvg(sourceImage);
   showResult();
   const kb = Math.round(lastSvg.length / 1024);

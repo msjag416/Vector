@@ -7,7 +7,8 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 | File | What it does |
 |------|--------------|
 | `index.html` | The whole app: the layout, the look, and all the logic. |
-| `imagetracer.js` | A free, public-domain tool (ImageTracer 1.2.6 by András Jankovics) that converts a normal picture into vector shapes. It's copied into the project so the app doesn't depend on another website. |
+| `vtracer.js` | VTracer 1.0.0-alpha.4 by visioncortex (free, MIT or Apache-2.0 license), the tool that converts a normal picture into smooth vector shapes. Copied from the npm package `@visioncortex/vtracer`. The only change is the loader at the bottom, so it runs in a web browser instead of on a server. |
+| `vtracer.wasm` | The engine behind `vtracer.js`. It's fast compiled code the browser downloads once, the first time you convert something. |
 | `ARCHITECTURE.md` | This file. |
 | `README.md` | Short instructions for using and hosting the app. |
 
@@ -22,12 +23,14 @@ Vector Maker is one web page that turns a written prompt or an uploaded picture 
 
 ## Converting to vector (both ways end here)
 
-1. The picture is shrunk if it's large (500, 800 or 1200 pixels wide for Low, Medium or High detail) so it runs fast on an iPad.
-2. It's drawn onto a hidden canvas with a white background behind any see-through parts.
-3. ImageTracer groups the pixels into the number of colors chosen (2 to 32) and draws smooth outlines around each color area. The Detail setting controls how closely those outlines follow the picture and how small a shape can be before it's thrown away.
-4. Each shape gets a 1-pixel outline in its own color so no white cracks show between shapes.
+1. Large pictures are shrunk (800, 1024 or 1280 pixels on the longest side for Low, Medium or High detail) so it runs fast on an iPad. Small pictures are left as they are.
+2. The picture is drawn onto a hidden canvas with a white background behind any see-through parts.
+3. VTracer groups similar colors (up to the number chosen in Colors), then draws smooth curves around each color area. Shapes are stacked on top of each other, so there are no cracks between them. The Detail setting controls how small a shape can be before it's thrown away and how closely two colors must match to be treated as one.
+4. The file gets a `viewBox` (the scaling info vector apps need to enlarge it cleanly) and a starting size of 2048 points on its longest side.
 5. If "Remove white background" is ticked, any near-white shapes are deleted so the background is see-through.
 6. The result is shown next to the original. "Re-trace" runs steps 1 to 5 again with new settings without asking the AI for a new picture. "Download SVG" saves the file.
+
+Why VTracer: the first version used a tool called ImageTracer, which copied the tiny pixel steps along every edge. That looked rough when enlarged. VTracer fits smooth curves instead.
 
 ## What gets saved on the device
 
@@ -35,4 +38,4 @@ Only two things are remembered, in the browser's own storage: which AI service w
 
 ## Known limits
 
-The AI draws a normal picture first and then it's converted, so the best results come from flat art, logos, icons and stickers. Detailed photos turn into poster-style color blocks.
+The AI draws a normal picture first and then it's converted, so the best results come from flat art, logos, icons and stickers. Detailed photos turn into poster-style color blocks, and photos on High detail can make large files (a few MB) that are slower to open.
