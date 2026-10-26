@@ -345,6 +345,7 @@ async function runKieJob(body, waitingText) {
 // ---------- AI upscale (KIE.ai Topaz) ----------
 // Topaz needs the picture at a web address, so it's first sent to KIE's upload service.
 let upscaledBlob = null;
+let upscaledBy = "";   // which engine made the last result, shown in the status line
 
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
@@ -357,8 +358,9 @@ function fileToDataUrl(file) {
 
 // Redraws any picture the browser can open (including iPad HEIC photos) as a PNG,
 // because Topaz only accepts JPEG, PNG or WebP.
-async function toPng(blob) {
-  if (["image/png", "image/jpeg", "image/webp"].includes(blob.type)) return blob;
+async function toPng(blob, always) {
+  if (!always && ["image/png", "image/jpeg", "image/webp"].includes(blob.type)) return blob;
+  if (always && blob.type === "image/png") return blob;
   const img = await loadImage(URL.createObjectURL(blob)).catch(() => {
     throw new Error("This browser can't open that kind of file. Please save the picture as a JPG or PNG and try again.");
   });
@@ -425,6 +427,7 @@ async function upscaleWithTopaz(original, factor) {
       input: { image: imageUrl },
     }, "Recraft Crisp is sharpening and enlarging your picture..." + label);
     try {
+      upscaledBy = $("upEngine").value === "recraft" ? "Recraft Crisp" : "Topaz";
       picture = await ($("upEngine").value === "recraft" ? recraft() : topaz());
     } catch (e) {
       // KIE sometimes answers "internal error" for no reason. Try Topaz once more,
@@ -436,6 +439,7 @@ async function upscaleWithTopaz(original, factor) {
       } catch (e2) {
         if (!/internal error/i.test(e2.message)) throw e2;
         setStatus("Topaz is down, using Recraft Crisp instead..." + label);
+        upscaledBy = "Recraft Crisp (Topaz failed)";
         picture = await recraft();
       }
     }
@@ -456,19 +460,20 @@ $("upGo").onclick = async () => {
     $("upAfter").src = URL.createObjectURL(upscaledBlob);
     $("upResult").classList.remove("hidden");
     const after = await loadImage($("upAfter").src);
-    setStatus("Done! The new picture is " + after.naturalWidth + " x " + after.naturalHeight + " pixels.");
+    setStatus("Done! " + upscaledBy + " made a " + after.naturalWidth + " x " + after.naturalHeight + " pixel picture.");
   } catch (e) {
     setStatus(e instanceof TypeError ? "Couldn't reach KIE.ai. Check your internet and try again." : e.message, true);
   }
   $("upGo").disabled = false;
 };
 
-$("upDownload").onclick = () => {
+// Always saves a PNG, even if KIE sent back a JPEG.
+$("upDownload").onclick = async () => {
   if (!upscaledBlob) return;
-  const ext = (upscaledBlob.type.split("/")[1] || "png").replace("jpeg", "jpg");
+  const png = await toPng(upscaledBlob, true);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(upscaledBlob);
-  a.download = "upscaled-" + Date.now() + "." + ext;
+  a.href = URL.createObjectURL(png);
+  a.download = "upscaled-" + Date.now() + ".png";
   a.click();
 };
 
